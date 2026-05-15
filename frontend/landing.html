@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ClassWatch — AI-Powered Classroom Attention Analytics</title>
+<meta name="description" content="ClassWatch uses computer vision and AI to give teachers real-time insight into student attention — without invading privacy."/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#000;--bg1:#0a0a0a;--bg2:#111;--bg3:#1a1a1a;
+  --border:rgba(255,255,255,0.08);--border2:rgba(255,255,255,0.14);
+  --green:#00e5a0;--green-dim:rgba(0,229,160,0.12);--green-glow:rgba(0,229,160,0.3);
+  --blue:#3b82f6;--purple:#8b5cf6;--amber:#f5a623;--red:#ff3b5c;
+  --t1:#fff;--t2:#a1a1a1;--t3:#555;
+  --display:'Syne',sans-serif;--body:'DM Sans',sans-serif;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--t1);font-family:var(--body);font-size:15px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+
+/* ── NAV ── */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  height:60px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 48px;
+  background:rgba(0,0,0,0.7);border-bottom:1px solid var(--border);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--t1)}
+.nav-logomark{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--green),#00b4ff);display:grid;place-items:center;flex-shrink:0;box-shadow:0 0 20px var(--green-glow)}
+.nav-logomark svg{width:16px;height:16px}
+.nav-logo-text{font-family:var(--display);font-size:17px;font-weight:700;letter-spacing:-.3px}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{color:var(--t2);text-decoration:none;font-size:14px;font-weight:500;transition:color .2s}
+.nav-links a:hover{color:var(--t1)}
+.nav-cta{display:flex;align-items:center;gap:10px}
+.btn-ghost{padding:8px 18px;border:1px solid var(--border2);border-radius:8px;background:none;color:var(--t2);font-family:var(--body);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;transition:all .2s}
+.btn-ghost:hover{border-color:var(--border);color:var(--t1);background:var(--bg2)}
+.btn-primary{padding:8px 20px;border:none;border-radius:8px;background:var(--green);color:#000;font-family:var(--display);font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;transition:all .2s}
+.btn-primary:hover{background:#00ffb3;box-shadow:0 0 20px var(--green-glow)}
+
+/* ── HERO ── */
+.hero{
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  text-align:center;padding:120px 24px 80px;
+  position:relative;overflow:hidden;
+}
+.hero-grid{
+  position:absolute;inset:0;
+  background-image:linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px);
+  background-size:60px 60px;pointer-events:none;
+}
+.hero-glow{
+  position:absolute;top:-100px;left:50%;transform:translateX(-50%);
+  width:900px;height:600px;
+  background:radial-gradient(ellipse,rgba(0,229,160,0.08) 0%,transparent 60%);
+  pointer-events:none;
+}
+.hero-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.2);
+  border-radius:20px;padding:6px 16px;
+  font-size:12px;font-weight:600;color:var(--green);letter-spacing:.5px;
+  margin-bottom:28px;text-transform:uppercase;
+}
+.hero-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.7)}}
+.hero h1{
+  font-family:var(--display);
+  font-size:clamp(42px,7vw,88px);
+  font-weight:800;letter-spacing:-3px;line-height:1.0;
+  margin-bottom:24px;
+  background:linear-gradient(135deg,#fff 30%,rgba(255,255,255,0.5));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hero h1 span{
+  background:linear-gradient(135deg,var(--green),#00b4ff);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hero-sub{font-size:clamp(16px,2.5vw,20px);color:var(--t2);max-width:620px;line-height:1.7;margin-bottom:40px}
+.hero-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center}
+.btn-hero{
+  display:flex;align-items:center;gap:8px;
+  padding:14px 32px;border:none;border-radius:12px;
+  background:var(--green);color:#000;
+  font-family:var(--display);font-size:16px;font-weight:700;
+  cursor:pointer;text-decoration:none;
+  transition:all .2s var(--ease);
+}
+.btn-hero:hover{background:#00ffb3;box-shadow:0 0 40px var(--green-glow);transform:translateY(-2px)}
+.btn-hero svg{width:18px;height:18px}
+.btn-hero-ghost{
+  display:flex;align-items:center;gap:8px;
+  padding:14px 28px;border:1px solid var(--border2);border-radius:12px;
+  background:none;color:var(--t1);
+  font-family:var(--body);font-size:15px;font-weight:500;
+  cursor:pointer;text-decoration:none;
+  transition:all .2s;
+}
+.btn-hero-ghost:hover{border-color:var(--border);background:var(--bg2)}
+.btn-hero-ghost svg{width:16px;height:16px;color:var(--t2)}
+
+.hero-stats{
+  display:flex;align-items:center;gap:40px;
+  margin-top:60px;padding-top:40px;
+  border-top:1px solid var(--border);
+  flex-wrap:wrap;justify-content:center;
+}
+.hero-stat-val{font-family:var(--display);font-size:32px;font-weight:700;letter-spacing:-1px;color:var(--t1)}
+.hero-stat-lbl{font-size:13px;color:var(--t3);margin-top:2px}
+
+/* ── SECTIONS ── */
+section{padding:100px 48px;max-width:1200px;margin:0 auto}
+.section-badge{
+  display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:1.2px;color:var(--green);margin-bottom:16px;
+}
+.section-title{font-family:var(--display);font-size:clamp(28px,4vw,48px);font-weight:700;letter-spacing:-.8px;line-height:1.15;margin-bottom:16px}
+.section-sub{font-size:17px;color:var(--t2);max-width:560px;line-height:1.7}
+
+/* ── HOW IT WORKS ── */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;margin-top:56px}
+.step{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;transition:border-color .2s,transform .2s;position:relative;overflow:hidden}
+.step:hover{border-color:var(--border2);transform:translateY(-3px)}
+.step::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--step-c,var(--green));border-radius:16px 16px 0 0}
+.step-num{width:36px;height:36px;border-radius:10px;background:var(--step-bg,var(--green-dim));display:grid;place-items:center;font-family:var(--display);font-size:16px;font-weight:700;color:var(--step-c,var(--green));margin-bottom:18px}
+.step-title{font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:-.2px;margin-bottom:10px}
+.step-desc{font-size:14px;color:var(--t2);line-height:1.6}
+
+/* ── FEATURES ── */
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-top:56px}
+.feature{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px 30px;transition:all .2s}
+.feature:hover{border-color:var(--border2);transform:translateY(-2px)}
+.feature-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;margin-bottom:18px;flex-shrink:0}
+.feature-icon svg{width:22px;height:22px;stroke-width:1.8}
+.feature-title{font-family:var(--display);font-size:17px;font-weight:700;letter-spacing:-.2px;margin-bottom:10px}
+.feature-desc{font-size:14px;color:var(--t2);line-height:1.65}
+
+/* ── DEMO SCREEN ── */
+.demo-section{padding:0 48px 100px;max-width:1200px;margin:0 auto}
+.demo-wrap{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:20px;overflow:hidden;
+  box-shadow:0 40px 80px rgba(0,0,0,0.6);
+}
+.demo-bar{
+  background:var(--bg3);border-bottom:1px solid var(--border);
+  padding:12px 20px;display:flex;align-items:center;gap:8px;
+}
+.demo-dot{width:12px;height:12px;border-radius:50%}
+.demo-url{flex:1;background:var(--bg2);border-radius:6px;padding:5px 14px;font-size:12px;color:var(--t3);margin:0 12px}
+.demo-screen{
+  background:linear-gradient(135deg,#0a0a0a,#111);
+  padding:32px;min-height:400px;
+  display:grid;grid-template-columns:200px 1fr;gap:20px;
+}
+.demo-sidebar{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px}
+.demo-nav{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:12px;color:var(--t2)}
+.demo-nav.active{background:var(--bg3);color:var(--t1)}
+.demo-nav-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.demo-content{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-content:start}
+.demo-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.demo-card-val{font-family:var(--display);font-size:28px;font-weight:700;line-height:1;margin-bottom:4px}
+.demo-card-lbl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.8px}
+.demo-chart{grid-column:1/-1;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px}
+.demo-chart-title{font-size:12px;font-weight:600;margin-bottom:12px;color:var(--t2)}
+.demo-bars{display:flex;align-items:flex-end;gap:4px;height:60px}
+.demo-bar-item{flex:1;border-radius:3px 3px 0 0;opacity:.8;transition:opacity .2s}
+.demo-bar-item:hover{opacity:1}
+
+/* ── PRIVACY ── */
+.privacy-section{
+  background:var(--bg1);border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+  padding:80px 48px;
+}
+.privacy-inner{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+.privacy-points{display:flex;flex-direction:column;gap:20px;margin-top:32px}
+.privacy-point{display:flex;align-items:flex-start;gap:14px}
+.privacy-check{width:24px;height:24px;border-radius:6px;background:var(--green-dim);display:grid;place-items:center;flex-shrink:0;margin-top:1px}
+.privacy-check svg{width:13px;height:13px;stroke:var(--green);stroke-width:2.5}
+.privacy-point-text{font-size:15px;color:var(--t2);line-height:1.6}
+.privacy-point-text strong{color:var(--t1);font-weight:600}
+.privacy-visual{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;text-align:center}
+.blur-demo{position:relative;display:inline-block;margin-bottom:16px}
+.blur-demo-face{width:120px;height:120px;border-radius:50%;background:linear-gradient(135deg,var(--bg3),var(--bg4));border:2px solid var(--border2);display:grid;place-items:center;filter:blur(8px)}
+.blur-demo-badge{position:absolute;bottom:-8px;right:-8px;background:var(--green);color:#000;border-radius:20px;padding:4px 10px;font-size:10px;font-weight:700}
+.privacy-visual-title{font-family:var(--display);font-size:15px;font-weight:600;margin-bottom:6px}
+.privacy-visual-sub{font-size:13px;color:var(--t3)}
+
+/* ── PRICING ── */
+.pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-top:56px}
+.plan{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:32px;position:relative;transition:all .2s}
+.plan:hover{border-color:var(--border2);transform:translateY(-3px)}
+.plan.popular{border-color:rgba(0,229,160,0.3);background:linear-gradient(135deg,rgba(0,229,160,0.04),var(--bg2))}
+.plan-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--green);color:#000;border-radius:20px;padding:4px 14px;font-size:11px;font-weight:700;white-space:nowrap}
+.plan-name{font-family:var(--display);font-size:18px;font-weight:700;margin-bottom:8px}
+.plan-desc{font-size:13px;color:var(--t2);margin-bottom:24px;line-height:1.5}
+.plan-price{font-family:var(--display);font-size:42px;font-weight:800;letter-spacing:-2px;margin-bottom:4px}
+.plan-price sup{font-size:20px;font-weight:500;vertical-align:super}
+.plan-period{font-size:13px;color:var(--t3);margin-bottom:28px}
+.plan-divider{height:1px;background:var(--border);margin-bottom:24px}
+.plan-features{display:flex;flex-direction:column;gap:12px;margin-bottom:28px}
+.plan-feature{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--t2)}
+.plan-feature svg{width:15px;height:15px;stroke:var(--green);stroke-width:2.5;flex-shrink:0}
+.plan-feature.off{color:var(--t3)}
+.plan-feature.off svg{stroke:var(--t3)}
+.btn-plan{width:100%;padding:12px;border-radius:10px;font-family:var(--display);font-size:14px;font-weight:700;cursor:pointer;text-align:center;text-decoration:none;display:block;transition:all .2s}
+.btn-plan-outline{background:none;border:1px solid var(--border2);color:var(--t2)}
+.btn-plan-outline:hover{border-color:var(--border3);color:var(--t1);background:var(--bg3)}
+.btn-plan-filled{background:var(--green);border:none;color:#000}
+.btn-plan-filled:hover{background:#00ffb3;box-shadow:0 0 24px var(--green-glow)}
+
+/* ── TESTIMONIALS ── */
+.testimonials{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-top:56px}
+.testimonial{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;transition:border-color .2s}
+.testimonial:hover{border-color:var(--border2)}
+.testimonial-text{font-size:15px;color:var(--t2);line-height:1.7;margin-bottom:20px;font-style:italic}
+.testimonial-text::before{content:'"';font-family:var(--display);font-size:40px;color:var(--green);line-height:0;vertical-align:-16px;margin-right:4px}
+.testimonial-author{display:flex;align-items:center;gap:12px}
+.testimonial-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-size:14px;font-weight:700;color:#000;flex-shrink:0}
+.testimonial-name{font-size:14px;font-weight:600}
+.testimonial-role{font-size:12px;color:var(--t3)}
+
+/* ── CTA ── */
+.cta-section{padding:100px 48px;text-align:center}
+.cta-inner{max-width:700px;margin:0 auto}
+.cta-inner h2{font-family:var(--display);font-size:clamp(32px,5vw,56px);font-weight:800;letter-spacing:-1.5px;line-height:1.1;margin-bottom:20px}
+.cta-inner p{font-size:18px;color:var(--t2);line-height:1.6;margin-bottom:40px}
+.cta-actions{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+
+/* ── FOOTER ── */
+footer{background:var(--bg1);border-top:1px solid var(--border);padding:48px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px}
+.footer-logo{display:flex;align-items:center;gap:8px;color:var(--t1);text-decoration:none}
+.footer-logo-mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--green),#00b4ff);display:grid;place-items:center}
+.footer-logo-mark svg{width:13px;height:13px}
+.footer-logo-text{font-family:var(--display);font-size:15px;font-weight:700}
+.footer-links{display:flex;gap:28px}
+.footer-links a{color:var(--t3);text-decoration:none;font-size:13px;transition:color .2s}
+.footer-links a:hover{color:var(--t2)}
+.footer-copy{font-size:12px;color:var(--t3)}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}
+.fade-up{animation:fadeUp .7s var(--ease) both}
+.fade-up-1{animation-delay:.1s}
+.fade-up-2{animation-delay:.2s}
+.fade-up-3{animation-delay:.3s}
+
+/* ── RESPONSIVE ── */
+@media(max-width:900px){
+  nav{padding:0 24px}
+  .nav-links{display:none}
+  section{padding:60px 24px}
+  .demo-section{padding:0 24px 60px}
+  .privacy-inner{grid-template-columns:1fr}
+  .demo-screen{grid-template-columns:1fr}
+  .demo-sidebar{display:none}
+  .cta-section{padding:60px 24px}
+  footer{padding:32px 24px;flex-direction:column;align-items:flex-start}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">
+    <div class="nav-logomark"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+    <span class="nav-logo-text">ClassWatch</span>
+  </a>
+  <div class="nav-links">
+    <a href="#how-it-works">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#pricing">Pricing</a>
+  </div>
+  <div class="nav-cta">
+    <a href="/?login=1" class="btn-ghost">Sign in</a>
+    <a href="#pricing" class="btn-primary">Get started</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+
+  <div class="hero-badge fade-up">
+    <div class="hero-badge-dot"></div>
+    AI-Powered · Privacy-First · Real-Time
+  </div>
+
+  <h1 class="fade-up fade-up-1">
+    Know when your<br/>class is <span>paying attention</span>
+  </h1>
+
+  <p class="hero-sub fade-up fade-up-2">
+    ClassWatch uses computer vision to give teachers real-time attention analytics — without storing faces, without invading privacy, without adding work to your day.
+  </p>
+
+  <div class="hero-actions fade-up fade-up-3">
+    <a href="/?register=1" class="btn-hero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Start Free Trial
+    </a>
+    <a href="#how-it-works" class="btn-hero-ghost">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+      See how it works
+    </a>
+  </div>
+
+  <div class="hero-stats fade-up">
+    <div>
+      <div class="hero-stat-val" style="color:var(--green)">98%</div>
+      <div class="hero-stat-lbl">Detection accuracy</div>
+    </div>
+    <div style="width:1px;height:40px;background:var(--border)"></div>
+    <div>
+      <div class="hero-stat-val">30+ FPS</div>
+      <div class="hero-stat-lbl">Real-time processing</div>
+    </div>
+    <div style="width:1px;height:40px;background:var(--border)"></div>
+    <div>
+      <div class="hero-stat-val" style="color:var(--blue)">0</div>
+      <div class="hero-stat-lbl">Faces stored</div>
+    </div>
+    <div style="width:1px;height:40px;background:var(--border)"></div>
+    <div>
+      <div class="hero-stat-val" style="color:var(--purple)">5 min</div>
+      <div class="hero-stat-lbl">Setup time</div>
+    </div>
+  </div>
+</div>
+
+<!-- DEMO SCREEN -->
+<div class="demo-section">
+  <div class="demo-wrap">
+    <div class="demo-bar">
+      <div class="demo-dot" style="background:#ff5f57"></div>
+      <div class="demo-dot" style="background:#febc2e"></div>
+      <div class="demo-dot" style="background:#28c840"></div>
+      <div class="demo-url">localhost:5000 — ClassWatch Dashboard</div>
+    </div>
+    <div class="demo-screen">
+      <div class="demo-sidebar">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px">
+          <div style="width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,var(--green),#00b4ff);display:grid;place-items:center"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" width="12" height="12"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <span style="font-family:var(--display);font-size:13px;font-weight:700">ClassWatch</span>
+        </div>
+        <div class="demo-nav active"><div class="demo-nav-dot"></div>Overview</div>
+        <div class="demo-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>&nbsp;Live Feed</div>
+        <div class="demo-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>&nbsp;Sessions</div>
+        <div class="demo-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>&nbsp;Analytics</div>
+      </div>
+      <div>
+        <div class="demo-content">
+          <div class="demo-card">
+            <div class="demo-card-val" style="color:var(--green)">78%</div>
+            <div class="demo-card-lbl">Live Attention</div>
+          </div>
+          <div class="demo-card">
+            <div class="demo-card-val">72%</div>
+            <div class="demo-card-lbl">Session Avg</div>
+          </div>
+          <div class="demo-card">
+            <div class="demo-card-val" style="color:var(--purple)">24</div>
+            <div class="demo-card-lbl">Students</div>
+          </div>
+          <div class="demo-chart">
+            <div class="demo-chart-title">Attention % over time</div>
+            <div class="demo-bars">
+              <!-- Simulated bar chart -->
+              <div class="demo-bar-item" style="height:60%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:75%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:82%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:70%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:45%;background:var(--amber)"></div>
+              <div class="demo-bar-item" style="height:38%;background:var(--red)"></div>
+              <div class="demo-bar-item" style="height:65%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:80%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:85%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:78%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:72%;background:var(--green)"></div>
+              <div class="demo-bar-item" style="height:68%;background:var(--green)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works">
+  <div class="section-badge">How it works</div>
+  <h2 class="section-title">Up and running<br/>in minutes</h2>
+  <p class="section-sub">No hardware installation. No IT department. Just a laptop with a camera and a browser.</p>
+
+  <div class="steps">
+    <div class="step" style="--step-c:var(--green);--step-bg:var(--green-dim)">
+      <div class="step-num">1</div>
+      <div class="step-title">Point your camera</div>
+      <div class="step-desc">Plug in any USB or laptop camera facing the classroom. ClassWatch works with standard webcams — no special hardware required.</div>
+    </div>
+    <div class="step" style="--step-c:var(--blue);--step-bg:rgba(59,130,246,0.12)">
+      <div class="step-num">2</div>
+      <div class="step-title">Start a session</div>
+      <div class="step-desc">Log in, click Start Session. The AI pipeline activates immediately — detecting students, tracking attention in real time on your GPU.</div>
+    </div>
+    <div class="step" style="--step-c:var(--purple);--step-bg:rgba(139,92,246,0.12)">
+      <div class="step-num">3</div>
+      <div class="step-title">Watch the dashboard</div>
+      <div class="step-desc">See live attention percentages, get alerted when class focus drops, and watch the timeline update frame by frame.</div>
+    </div>
+    <div class="step" style="--step-c:var(--amber);--step-bg:rgba(245,166,35,0.12)">
+      <div class="step-num">4</div>
+      <div class="step-title">Export your report</div>
+      <div class="step-desc">End the session to get a full PDF or CSV report — average attention, peak moments, distraction events, stability score.</div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" style="padding-top:0">
+  <div class="section-badge">Features</div>
+  <h2 class="section-title">Everything a teacher needs.<br/>Nothing they don't.</h2>
+
+  <div class="features-grid">
+    <div class="feature">
+      <div class="feature-icon" style="background:var(--green-dim)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+      <div class="feature-title">Real-Time Attention %</div>
+      <div class="feature-desc">Live gauge showing exactly what fraction of the class is attentive right now. Updates every frame.</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(59,130,246,0.12)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      <div class="feature-title">Instant Alerts</div>
+      <div class="feature-desc">Get notified the moment class attention drops below your threshold — so you can re-engage before it's too late.</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(139,92,246,0.12)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+      <div class="feature-title">Session History</div>
+      <div class="feature-desc">Every session is saved to your database. Compare across weeks, classes, or teachers to spot trends.</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(245,166,35,0.12)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+      <div class="feature-title">PDF & CSV Reports</div>
+      <div class="feature-desc">One-click export of any session as a beautifully formatted PDF report or raw CSV data for further analysis.</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:rgba(255,59,92,0.12)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.8"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></div>
+      <div class="feature-title">GPU Accelerated</div>
+      <div class="feature-desc">YOLO person detection runs on your NVIDIA GPU — 30+ FPS even in large classrooms with 30+ students.</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon" style="background:var(--green-dim)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+      <div class="feature-title">Multi-Role Access</div>
+      <div class="feature-desc">Institution admins, school admins, and teachers each get their own scoped view. Manage your whole organization.</div>
+    </div>
+  </div>
+</section>
+
+<!-- PRIVACY -->
+<div class="privacy-section" id="privacy">
+  <div class="privacy-inner">
+    <div>
+      <div class="section-badge">Privacy First</div>
+      <h2 class="section-title">We never store<br/>a single face.</h2>
+      <p class="section-sub" style="margin-bottom:0">ClassWatch is built from the ground up with student privacy as a hard constraint — not an afterthought.</p>
+      <div class="privacy-points">
+        <div class="privacy-point">
+          <div class="privacy-check"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="privacy-point-text"><strong>Faces are blurred in the video feed</strong> — no identifiable footage ever leaves the camera.</div>
+        </div>
+        <div class="privacy-point">
+          <div class="privacy-check"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="privacy-point-text"><strong>Only aggregate attention data is stored</strong> — we log percentages, not individuals.</div>
+        </div>
+        <div class="privacy-point">
+          <div class="privacy-check"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="privacy-point-text"><strong>All processing is local</strong> — your camera feed never leaves your machine.</div>
+        </div>
+        <div class="privacy-point">
+          <div class="privacy-check"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div class="privacy-point-text"><strong>Head pose, not face recognition</strong> — we detect attention direction, not identity.</div>
+        </div>
+      </div>
+    </div>
+    <div class="privacy-visual">
+      <div class="blur-demo">
+        <div class="blur-demo-face">
+          <svg viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="1.5" width="48" height="48"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="blur-demo-badge">BLURRED</div>
+      </div>
+      <div class="privacy-visual-title">Face Blur Active</div>
+      <div class="privacy-visual-sub">Faces are blurred in real-time before any frame is displayed or stored.</div>
+      <div style="margin-top:20px;display:flex;flex-direction:column;gap:8px">
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--t3)">Faces stored</span><span style="color:var(--green);font-weight:600">0</span>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--t3)">Data sent to cloud</span><span style="color:var(--green);font-weight:600">None</span>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:var(--t3)">Processing location</span><span style="color:var(--green);font-weight:600">Local GPU</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PRICING -->
+<section id="pricing">
+  <div style="text-align:center;margin-bottom:0">
+    <div class="section-badge">Pricing</div>
+    <h2 class="section-title">Simple, transparent pricing</h2>
+    <p class="section-sub" style="margin:0 auto">Start free. Scale as your institution grows. No surprise fees.</p>
+  </div>
+
+  <div class="pricing-grid">
+    <div class="plan">
+      <div class="plan-name">Starter</div>
+      <div class="plan-desc">Perfect for a single teacher trying it out.</div>
+      <div class="plan-price"><sup>$</sup>0</div>
+      <div class="plan-period">Free forever</div>
+      <div class="plan-divider"></div>
+      <div class="plan-features">
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>1 teacher account</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Live attention monitoring</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Session history (30 days)</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>CSV export</div>
+        <div class="plan-feature off"><svg viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>PDF reports</div>
+        <div class="plan-feature off"><svg viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Admin dashboard</div>
+      </div>
+      <a href="/?register=1&plan=starter" class="btn-plan btn-plan-outline">Get started free</a>
+    </div>
+
+    <div class="plan popular">
+      <div class="plan-badge">Most Popular</div>
+      <div class="plan-name">School</div>
+      <div class="plan-desc">For a full school with multiple teachers and admins.</div>
+      <div class="plan-price"><sup>$</sup>49</div>
+      <div class="plan-period">per month · billed annually</div>
+      <div class="plan-divider"></div>
+      <div class="plan-features">
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Up to 20 teachers</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>School admin dashboard</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Unlimited session history</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>PDF + CSV export</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Analytics across classes</div>
+        <div class="plan-feature off"><svg viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Multi-school management</div>
+      </div>
+      <a href="/?register=1&plan=school" class="btn-plan btn-plan-filled">Start free trial</a>
+    </div>
+
+    <div class="plan">
+      <div class="plan-name">Institution</div>
+      <div class="plan-desc">For districts and institutions managing multiple schools.</div>
+      <div class="plan-price"><sup>$</sup>199</div>
+      <div class="plan-period">per month · billed annually</div>
+      <div class="plan-divider"></div>
+      <div class="plan-features">
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Unlimited teachers</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Institution admin panel</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Multi-school management</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Priority support</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>Custom deployment</div>
+        <div class="plan-feature"><svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>SLA & onboarding</div>
+      </div>
+      <a href="mailto:hello@classwatch.io" class="btn-plan btn-plan-outline">Contact sales</a>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section style="padding-top:0">
+  <div class="section-badge">Testimonials</div>
+  <h2 class="section-title">Teachers love it</h2>
+  <div class="testimonials">
+    <div class="testimonial">
+      <div class="testimonial-text">ClassWatch completely changed how I pace my lectures. I can see exactly when students zone out and adjust on the spot.</div>
+      <div class="testimonial-author">
+        <div class="testimonial-avatar" style="background:linear-gradient(135deg,var(--green),var(--blue))">SR</div>
+        <div><div class="testimonial-name">Sarah R.</div><div class="testimonial-role">Physics Teacher, Delhi Public School</div></div>
+      </div>
+    </div>
+    <div class="testimonial">
+      <div class="testimonial-text">The privacy aspect sold it for us. No faces stored, no cloud upload — our school's data stays on our hardware.</div>
+      <div class="testimonial-author">
+        <div class="testimonial-avatar" style="background:linear-gradient(135deg,var(--purple),var(--blue))">MK</div>
+        <div><div class="testimonial-name">Manish K.</div><div class="testimonial-role">Principal, Greenfield Academy</div></div>
+      </div>
+    </div>
+    <div class="testimonial">
+      <div class="testimonial-text">I use the session reports in my weekly reviews. It's data I never had before and it's genuinely useful.</div>
+      <div class="testimonial-author">
+        <div class="testimonial-avatar" style="background:linear-gradient(135deg,var(--amber),var(--red))">AP</div>
+        <div><div class="testimonial-name">Ankita P.</div><div class="testimonial-role">Mathematics Teacher, Ryan International</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<div class="cta-section">
+  <div class="cta-inner">
+    <h2>Ready to understand<br/>your classroom?</h2>
+    <p>Join teachers who use ClassWatch to teach more effectively. Set up in 5 minutes. No hardware required.</p>
+    <div class="cta-actions">
+      <a href="/?register=1" class="btn-hero">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Start for free
+      </a>
+      <a href="mailto:hello@classwatch.io" class="btn-hero-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Talk to sales
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <a href="#" class="footer-logo">
+    <div class="footer-logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" width="13" height="13"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+    <span class="footer-logo-text">ClassWatch</span>
+  </a>
+  <div class="footer-links">
+    <a href="#how-it-works">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#pricing">Pricing</a>
+    <a href="mailto:hello@classwatch.io">Contact</a>
+  </div>
+  <div class="footer-copy">© 2025 ClassWatch. All rights reserved.</div>
+</footer>
+
+</body>
+</html>

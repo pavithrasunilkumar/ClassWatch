@@ -1,18 +1,21 @@
 # ============================================================
 # dashboard.py — ClassWatch Web Dashboard & API
-# Fixes: JWT token correctly sent on all requests,
-#        session start/stop lifecycle, GPU status,
-#        analytics endpoints, camera deferred to session start
+# New: /api/sessions/<id>/export/csv
+#      /api/sessions/<id>/export/pdf
+#      /api/sessions/export/csv  (all sessions)
 # ============================================================
 
 import os
+import io
+import csv
+import statistics
 import threading
 import webbrowser
 import queue
 import cv2
-import statistics
 from datetime import datetime
-from flask import Flask, request, jsonify, Response, send_from_directory, g
+from flask import (Flask, request, jsonify, Response,
+                   send_from_directory, g, make_response)
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
@@ -25,28 +28,27 @@ from config import (
     FRAME_WIDTH, FRAME_HEIGHT,
 )
 
-# ── Paths ─────────────────────────────────────────────────────
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
-# ── Flask ─────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 app.config.update(
     SECRET_KEY                     = SECRET_KEY,
     SQLALCHEMY_DATABASE_URI        = DATABASE_URL,
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
-    SQLALCHEMY_ENGINE_OPTIONS      = {"pool_pre_ping": True, "pool_recycle": 300},
+    SQLALCHEMY_ENGINE_OPTIONS      = {
+        "pool_pre_ping":    True,
+        "pool_recycle":     300,
+        # SQLite: allow access from multiple threads (main loop + Flask threads)
+        "connect_args":     {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    },
 )
 CORS(app, origins="*", supports_credentials=True,
      allow_headers=["Authorization", "Content-Type"],
-     expose_headers=["Authorization"])
+     expose_headers=["Authorization", "Content-Disposition"])
 db.init_app(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 app.register_blueprint(auth_bp)
-@app.route("/api/debug/token", methods=["GET", "POST"])
-def debug_token():
-    auth = request.headers.get("Authorization", "MISSING")
-    return jsonify({"auth_header": auth, "all_headers": dict(request.headers)})
 
 # ── MJPEG ─────────────────────────────────────────────────────
 _frame_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=1)
@@ -58,13 +60,13 @@ _cam_enabled  = True
 _session_running = False
 _session_lock    = threading.Lock()
 
-# ── Resolution control ────────────────────────────────────────
+# ── Resolution ────────────────────────────────────────────────
 RESOLUTIONS = {"480p": (640, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
 _target_resolution = (FRAME_WIDTH, FRAME_HEIGHT)
 _current_res_key   = "720p"
 _resolution_lock   = threading.Lock()
 
-# ── GPU status ────────────────────────────────────────────────
+# ── GPU ───────────────────────────────────────────────────────
 _gpu_device = "cpu"
 
 # ── Live state ────────────────────────────────────────────────
@@ -92,7 +94,7 @@ _teacher_id_ref      = 1
 _class_id_ref        = None
 
 
-# ── Helpers called from main.py ───────────────────────────────
+# ── Helpers for main.py ───────────────────────────────────────
 
 def get_session_running() -> bool:
     with _session_lock:
@@ -113,16 +115,33 @@ def register_shutdown(event):
 
 # ── SPA ───────────────────────────────────────────────────────
 
+@app.route("/app")
+def app_redirect():
+    from flask import redirect
+    return redirect("/")
+
+
+@app.route("/landing")
+def landing():
+    return send_from_directory(FRONTEND_DIR, "landing.html")
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def spa(path):
+    # Don't intercept API routes or socket.io
+    if path.startswith(("api/", "video_feed", "socket.io")):
+        from flask import abort
+        abort(404)
     full = os.path.join(FRONTEND_DIR, path)
-    if path and os.path.exists(full):
+    # Serve any file that actually exists (landing.html, assets, etc.)
+    if path and os.path.exists(full) and os.path.isfile(full):
         return send_from_directory(FRONTEND_DIR, path)
+    # Everything else → SPA
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 
-# ── MJPEG stream ──────────────────────────────────────────────
+# ── MJPEG ─────────────────────────────────────────────────────
 
 @app.route("/video_feed")
 def video_feed():
@@ -171,19 +190,17 @@ def set_resolution():
         _target_resolution = RESOLUTIONS[key]
         _current_res_key   = key
     socketio.emit("resolution_changed", {"resolution": key})
-    return jsonify({"ok": True, "resolution": key, "size": list(RESOLUTIONS[key])})
+    return jsonify({"ok": True, "resolution": key})
 
-
-# ── GPU status ────────────────────────────────────────────────
 
 @app.route("/api/system/status", methods=["GET"])
 @require_auth
 def system_status():
     return jsonify({
-        "gpu_device":   _gpu_device,
-        "gpu_label":    "CUDA (NVIDIA)" if _gpu_device == "cuda" else "CPU",
-        "resolution":   _current_res_key,
-        "cam_enabled":  _cam_enabled,
+        "gpu_device":     _gpu_device,
+        "gpu_label":      "CUDA (NVIDIA)" if _gpu_device == "cuda" else "CPU",
+        "resolution":     _current_res_key,
+        "cam_enabled":    _cam_enabled,
         "session_active": _session_running,
     })
 
@@ -211,15 +228,15 @@ def session_start():
     _last_was_distracted = False
     _snapshot_counter    = 0
 
-    data      = request.get_json(silent=True) or {}
-    class_id  = data.get("class_id") or _class_id_ref
+    data       = request.get_json(silent=True) or {}
+    class_id   = data.get("class_id") or _class_id_ref
     teacher_id = g.current_user.id
 
-    with app.app_context():
-        s = DbSession(teacher_id=teacher_id, class_id=class_id, is_active=True)
-        db.session.add(s)
-        db.session.commit()
-        sid = s.id
+    # Already inside a Flask request context — no need for app.app_context()
+    s = DbSession(teacher_id=teacher_id, class_id=class_id, is_active=True)
+    db.session.add(s)
+    db.session.commit()
+    sid = s.id
 
     with _live_lock:
         _live["session_db_id"] = sid
@@ -242,12 +259,12 @@ def session_stop():
         sid = _live.get("session_db_id")
 
     if sid:
-        _finalize_session(sid)
+        _finalize_session(sid, inside_request=True)
 
     return jsonify({"ok": True})
 
 
-def _finalize_session(sid: int):
+def _finalize_session(sid: int, inside_request: bool = False):
     with _live_lock:
         tl     = list(_live.get("timeline", []))
         avg    = _live.get("avg_pct")
@@ -255,11 +272,10 @@ def _finalize_session(sid: int):
         low    = _live.get("low_pct")
         alerts = _live.get("alert_count", 0)
 
-    # Stability = 100 - stdev of timeline pcts
     vals      = [t["pct"] for t in tl]
     stability = round(max(0.0, 100.0 - (statistics.stdev(vals) if len(vals) >= 2 else 0.0)), 1)
 
-    with app.app_context():
+    def _do_finalize():
         s = db.session.get(DbSession, sid)
         if not s:
             return
@@ -276,6 +292,12 @@ def _finalize_session(sid: int):
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+    if inside_request:
+        _do_finalize()
+    else:
+        with app.app_context():
+            _do_finalize()
 
     summary = {
         "session_id":         sid,
@@ -335,6 +357,253 @@ def get_session(sid):
     return jsonify({"session": s.to_dict(include_snapshots=True)})
 
 
+# ── Export: CSV ───────────────────────────────────────────────
+
+@app.route("/api/sessions/<int:sid>/export/csv", methods=["GET"])
+@require_auth
+def export_session_csv(sid):
+    s = db.session.get(DbSession, sid)
+    if not s:
+        return jsonify({"error": "Not found"}), 404
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header block
+    writer.writerow(["ClassWatch Session Report"])
+    writer.writerow(["Session ID", sid])
+    writer.writerow(["Teacher",    s.teacher.name if s.teacher else "—"])
+    writer.writerow(["Class",      s.class_.name  if s.class_  else "—"])
+    writer.writerow(["Started",    s.started_at.strftime("%Y-%m-%d %H:%M:%S") if s.started_at else "—"])
+    writer.writerow(["Ended",      s.ended_at.strftime("%Y-%m-%d %H:%M:%S")   if s.ended_at  else "—"])
+    writer.writerow(["Duration",   f"{s.duration_seconds}s" if s.duration_seconds else "—"])
+    writer.writerow([])
+    writer.writerow(["Summary"])
+    writer.writerow(["Avg Attention",      f"{s.avg_attention}%"   if s.avg_attention   is not None else "—"])
+    writer.writerow(["Peak Attention",     f"{s.peak_attention}%"  if s.peak_attention  is not None else "—"])
+    writer.writerow(["Lowest Attention",   f"{s.low_attention}%"   if s.low_attention   is not None else "—"])
+    writer.writerow(["Stability Score",    f"{s.stability_score}"  if s.stability_score is not None else "—"])
+    writer.writerow(["Distraction Events", s.distraction_events])
+    writer.writerow([])
+    writer.writerow(["Timeline"])
+    writer.writerow(["Timestamp", "Attentive Count", "Total Count", "Attention %", "FPS"])
+    for snap in s.snapshots:
+        writer.writerow([
+            snap.timestamp.strftime("%H:%M:%S"),
+            snap.attentive_count,
+            snap.total_count,
+            snap.attention_pct,
+            snap.fps,
+        ])
+
+    output.seek(0)
+    resp = make_response(output.getvalue())
+    resp.headers["Content-Type"]        = "text/csv"
+    resp.headers["Content-Disposition"] = f"attachment; filename=classwatch_session_{sid}.csv"
+    return resp
+
+
+@app.route("/api/sessions/export/csv", methods=["GET"])
+@require_auth
+def export_all_csv():
+    """Export all sessions for this user as CSV."""
+    user = g.current_user
+    q    = DbSession.query.filter_by(is_active=False)
+    if user.role == "teacher":
+        q = q.filter_by(teacher_id=user.id)
+    sessions = q.order_by(DbSession.started_at.desc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ClassWatch — All Sessions Export"])
+    writer.writerow(["Exported", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")])
+    writer.writerow([])
+    writer.writerow(["ID", "Teacher", "Class", "Date", "Duration (s)",
+                     "Avg Attention %", "Peak %", "Low %",
+                     "Stability", "Distraction Events"])
+    for s in sessions:
+        writer.writerow([
+            s.id,
+            s.teacher.name if s.teacher else "—",
+            s.class_.name  if s.class_  else "—",
+            s.started_at.strftime("%Y-%m-%d %H:%M") if s.started_at else "—",
+            s.duration_seconds or 0,
+            s.avg_attention    or 0,
+            s.peak_attention   or 0,
+            s.low_attention    or 0,
+            s.stability_score  or 0,
+            s.distraction_events or 0,
+        ])
+
+    output.seek(0)
+    resp = make_response(output.getvalue())
+    resp.headers["Content-Type"]        = "text/csv"
+    resp.headers["Content-Disposition"] = "attachment; filename=classwatch_all_sessions.csv"
+    return resp
+
+
+# ── Export: PDF (HTML rendered as PDF via browser print) ──────
+# We generate a styled HTML report that the browser prints as PDF.
+# No server-side PDF library needed.
+
+@app.route("/api/sessions/<int:sid>/export/pdf", methods=["GET"])
+@require_auth
+def export_session_pdf(sid):
+    s = db.session.get(DbSession, sid)
+    if not s:
+        return jsonify({"error": "Not found"}), 404
+
+    snaps    = s.snapshots
+    timeline = [(snap.timestamp.strftime("%H:%M:%S"), snap.attention_pct)
+                for snap in snaps]
+    # Build sparkline data as JS array
+    tl_labels = [f'"{t[0]}"' for t in timeline]
+    tl_data   = [str(round(t[1], 1)) for t in timeline]
+
+    avg   = s.avg_attention   or 0
+    peak  = s.peak_attention  or 0
+    low   = s.low_attention   or 0
+    stab  = s.stability_score or 0
+    alts  = s.distraction_events or 0
+    dur   = f"{s.duration_seconds // 60}m {s.duration_seconds % 60}s" if s.duration_seconds else "—"
+    grade = "Excellent" if avg >= 80 else "Good" if avg >= 65 else "Fair" if avg >= 50 else "Needs Attention"
+    grade_col = "#00e5a0" if avg >= 80 else "#3b82f6" if avg >= 65 else "#f5a623" if avg >= 50 else "#ff3b5c"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>ClassWatch Report — Session #{sid}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap');
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:'DM Sans',sans-serif;background:#fff;color:#111;font-size:14px;padding:40px;max-width:900px;margin:0 auto}}
+  .header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:36px;padding-bottom:20px;border-bottom:2px solid #f0f0f0}}
+  .logo{{display:flex;align-items:center;gap:10px}}
+  .logo-mark{{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#00e5a0,#3b82f6);display:grid;place-items:center}}
+  .logo-mark svg{{width:18px;height:18px}}
+  .logo-text{{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;letter-spacing:-.3px}}
+  .report-title{{text-align:right}}
+  .report-title h2{{font-family:'Syne',sans-serif;font-size:22px;font-weight:700;letter-spacing:-.4px}}
+  .report-title p{{font-size:12px;color:#888;margin-top:4px}}
+  .meta-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px}}
+  .meta-item{{background:#f8f8f8;border-radius:10px;padding:14px 16px}}
+  .meta-label{{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:#888;margin-bottom:5px}}
+  .meta-value{{font-family:'Syne',sans-serif;font-size:15px;font-weight:600}}
+  .kpi-row{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:28px}}
+  .kpi{{border:1px solid #f0f0f0;border-radius:12px;padding:16px;text-align:center;position:relative;overflow:hidden}}
+  .kpi::before{{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--c,#e0e0e0);border-radius:12px 12px 0 0}}
+  .kpi-val{{font-family:'Syne',sans-serif;font-size:26px;font-weight:700;line-height:1;margin-bottom:5px}}
+  .kpi-lbl{{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.7px}}
+  .grade-badge{{display:inline-block;padding:4px 14px;border-radius:20px;font-size:12px;font-weight:600;background:{grade_col}22;color:{grade_col};border:1px solid {grade_col}44;margin-top:8px}}
+  .section-title{{font-family:'Syne',sans-serif;font-size:16px;font-weight:700;letter-spacing:-.2px;margin-bottom:14px}}
+  .chart-wrap{{background:#f8f8f8;border-radius:12px;padding:20px;margin-bottom:24px}}
+  .alerts-table{{width:100%;border-collapse:collapse;margin-bottom:24px}}
+  .alerts-table th{{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#888;text-align:left;padding:0 12px 10px;border-bottom:1px solid #f0f0f0;font-weight:500}}
+  .alerts-table td{{padding:10px 12px;border-bottom:1px solid #f8f8f8;font-size:13px}}
+  .alerts-table tr:last-child td{{border-bottom:none}}
+  .footer{{margin-top:36px;padding-top:16px;border-top:1px solid #f0f0f0;display:flex;justify-content:space-between;font-size:11px;color:#aaa}}
+  @media print{{
+    body{{padding:20px}}
+    button{{display:none}}
+    .no-print{{display:none}}
+  }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+    <span class="logo-text">ClassWatch</span>
+  </div>
+  <div class="report-title">
+    <h2>Session Report #{sid}</h2>
+    <p>Generated {datetime.utcnow().strftime("%B %d, %Y at %H:%M UTC")}</p>
+  </div>
+</div>
+
+<div class="meta-grid">
+  <div class="meta-item"><div class="meta-label">Teacher</div><div class="meta-value">{s.teacher.name if s.teacher else "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Class</div><div class="meta-value">{s.class_.name if s.class_ else "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Date</div><div class="meta-value">{s.started_at.strftime("%b %d, %Y") if s.started_at else "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Started</div><div class="meta-value">{s.started_at.strftime("%H:%M:%S") if s.started_at else "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Ended</div><div class="meta-value">{s.ended_at.strftime("%H:%M:%S") if s.ended_at else "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Duration</div><div class="meta-value">{dur}</div></div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi" style="--c:{grade_col}">
+    <div class="kpi-val" style="color:{grade_col}">{avg}%</div>
+    <div class="kpi-lbl">Avg Attention</div>
+    <div class="grade-badge">{grade}</div>
+  </div>
+  <div class="kpi" style="--c:#00e5a0">
+    <div class="kpi-val" style="color:#00e5a0">{peak}%</div>
+    <div class="kpi-lbl">Peak</div>
+  </div>
+  <div class="kpi" style="--c:#ff3b5c">
+    <div class="kpi-val" style="color:#ff3b5c">{low}%</div>
+    <div class="kpi-lbl">Lowest</div>
+  </div>
+  <div class="kpi" style="--c:#3b82f6">
+    <div class="kpi-val" style="color:#3b82f6">{stab}</div>
+    <div class="kpi-lbl">Stability / 100</div>
+  </div>
+  <div class="kpi" style="--c:#f5a623">
+    <div class="kpi-val" style="color:#f5a623">{alts}</div>
+    <div class="kpi-lbl">Alert Events</div>
+  </div>
+</div>
+
+<div class="section-title">Attention Timeline</div>
+<div class="chart-wrap">
+  <canvas id="tlChart" height="120"></canvas>
+</div>
+
+<div class="section-title">Distraction Events</div>
+{"".join([f'<table class="alerts-table"><thead><tr><th>Time</th><th>Attention %</th><th>Drop from 50%</th></tr></thead><tbody>' +
+"".join([f'<tr><td>{a.timestamp.strftime("%H:%M:%S")}</td><td style="color:#ff3b5c;font-weight:600">{a.pct}%</td><td>{round(50-a.pct,1)}% below threshold</td></tr>' for a in s.alerts]) +
+'</tbody></table>' if s.alerts else '<p style="color:#aaa;font-size:13px;padding:12px 0">No distraction events recorded — class maintained focus throughout.</p>'])}
+
+<div class="footer">
+  <span>ClassWatch v2.0 — AI-Powered Classroom Attention Analysis</span>
+  <span>Session #{sid} · {s.started_at.strftime("%Y-%m-%d") if s.started_at else ""}</span>
+</div>
+
+<script>
+const ctx = document.getElementById('tlChart').getContext('2d');
+new Chart(ctx, {{
+  type: 'line',
+  data: {{
+    labels: [{",".join(tl_labels)}],
+    datasets: [{{
+      data: [{",".join(tl_data)}],
+      borderColor: '#00e5a0',
+      backgroundColor: 'rgba(0,229,160,0.08)',
+      borderWidth: 2, pointRadius: 0, tension: 0.4, fill: true
+    }}]
+  }},
+  options: {{
+    responsive: true, animation: false,
+    plugins: {{ legend: {{ display: false }} }},
+    scales: {{
+      x: {{ ticks: {{ maxTicksLimit: 10, font: {{ size: 10 }} }}, grid: {{ color: 'rgba(0,0,0,0.05)' }} }},
+      y: {{ min: 0, max: 100, ticks: {{ callback: v => v+'%', font: {{ size: 10 }} }}, grid: {{ color: 'rgba(0,0,0,0.05)' }} }}
+    }}
+  }}
+}});
+window.onload = () => setTimeout(() => window.print(), 800);
+</script>
+</body>
+</html>"""
+
+    resp = make_response(html)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 # ── Admin APIs ────────────────────────────────────────────────
 
 @app.route("/api/schools", methods=["GET"])
@@ -391,8 +660,6 @@ def create_class():
     return jsonify({"class": cls.to_dict()}), 201
 
 
-# ── Analytics ─────────────────────────────────────────────────
-
 @app.route("/api/analytics/overview", methods=["GET"])
 @require_auth
 def analytics_overview():
@@ -426,8 +693,6 @@ def list_alerts():
     return jsonify({"alerts": [a.to_dict() for a in alerts]})
 
 
-# ── Shutdown ──────────────────────────────────────────────────
-
 @app.route("/api/shutdown", methods=["POST"])
 @require_auth
 def shutdown():
@@ -449,7 +714,7 @@ def on_connect():
     socketio.emit("state_sync", snap, to=request.sid)
 
 
-# ── Internal: push_frame / update_live ───────────────────────
+# ── Internal push/update ──────────────────────────────────────
 
 def push_frame(frame):
     if frame is None or frame.size == 0 or not _cam_enabled:
@@ -469,7 +734,6 @@ def update_live(attentive: int, total: int, avg_pct: float,
                 session_start: str, fps: float = 0.0):
     global _last_was_distracted, _snapshot_counter
 
-    # Do NOT update if session not running
     with _session_lock:
         if not _session_running:
             return
@@ -480,12 +744,9 @@ def update_live(attentive: int, total: int, avg_pct: float,
 
     with _live_lock:
         _live.update({
-            "pct":        pct,
-            "avg_pct":    avg_pct,
-            "attentive":  attentive,
-            "total":      total,
-            "fps":        round(fps, 1),
-            "start_time": session_start,
+            "pct": pct, "avg_pct": avg_pct,
+            "attentive": attentive, "total": total,
+            "fps": round(fps, 1), "start_time": session_start,
         })
         _live["timeline"].append({"time": now, "pct": pct})
         if len(_live["timeline"]) > 60:
@@ -503,12 +764,9 @@ def update_live(attentive: int, total: int, avg_pct: float,
                 _write_alert(sid, pct, now)
 
         payload = {
-            "pct":             pct,
-            "avg_pct":         avg_pct,
-            "attentive":       attentive,
-            "total":           total,
-            "fps":             round(fps, 1),
-            "start_time":      session_start,
+            "pct": pct, "avg_pct": avg_pct,
+            "attentive": attentive, "total": total,
+            "fps": round(fps, 1), "start_time": session_start,
             "timeline":        _live["timeline"][-30:],
             "distraction_log": _live["distraction_log"],
             "alert_count":     _live["alert_count"],
@@ -526,29 +784,41 @@ def update_live(attentive: int, total: int, avg_pct: float,
 
 
 def _write_snapshot(sid, attentive, total, pct, fps):
-    with app.app_context():
-        snap = AttentionSnapshot(
-            session_id=sid, attentive_count=attentive,
-            total_count=total, attention_pct=pct, fps=fps,
-        )
-        db.session.add(snap)
-        try:
+    """Write attention snapshot — called from main loop thread."""
+    try:
+        with app.app_context():
+            snap = AttentionSnapshot(
+                session_id=sid, attentive_count=attentive,
+                total_count=total, attention_pct=pct, fps=fps,
+            )
+            db.session.add(snap)
             db.session.commit()
+            db.session.expunge_all()
+    except Exception:
+        try:
+            with app.app_context():
+                db.session.rollback()
         except Exception:
-            db.session.rollback()
+            pass
 
 
 def _write_alert(sid, pct, time_str):
-    with app.app_context():
-        alert = Alert(
-            session_id=sid, pct=pct, alert_type="low_attention",
-            message=f"Attention dropped to {pct}% at {time_str}",
-        )
-        db.session.add(alert)
-        try:
+    """Write alert — called from main loop thread."""
+    try:
+        with app.app_context():
+            alert = Alert(
+                session_id=sid, pct=pct, alert_type="low_attention",
+                message=f"Attention dropped to {pct}% at {time_str}",
+            )
+            db.session.add(alert)
             db.session.commit()
+            db.session.expunge_all()
+    except Exception:
+        try:
+            with app.app_context():
+                db.session.rollback()
         except Exception:
-            db.session.rollback()
+            pass
 
 
 def start_web_dashboard(teacher_id: int = 1, class_id=None):
@@ -564,7 +834,7 @@ def start_web_dashboard(teacher_id: int = 1, class_id=None):
                      debug=False, use_reloader=False, log_output=False)
 
     threading.Thread(target=_run, daemon=True).start()
-    threading.Timer(1.4, lambda: webbrowser.open(f"http://localhost:{WEB_PORT}")).start()
+    threading.Timer(1.4, lambda: webbrowser.open(f"http://localhost:{WEB_PORT}/landing")).start()
 
 
 def run_final_dashboard(stats: dict):

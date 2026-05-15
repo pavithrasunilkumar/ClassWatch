@@ -328,6 +328,25 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:var(--bod
     <div id="form-register" style="display:none">
       <div class="auth-error"   id="reg-err"></div>
       <div class="auth-success" id="reg-ok"></div>
+      <!-- Plan selector -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px" id="plan-selector">
+        <div class="plan-opt" data-plan="starter" onclick="selectPlan('starter')" style="border:1px solid var(--border2);border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;transition:all .2s">
+          <div style="font-family:var(--display);font-size:13px;font-weight:700;margin-bottom:3px">Free</div>
+          <div style="font-size:10px;color:var(--t3)">1 teacher</div>
+          <div style="font-family:var(--display);font-size:16px;font-weight:700;color:var(--green);margin-top:4px">$0</div>
+        </div>
+        <div class="plan-opt active-plan" data-plan="school" onclick="selectPlan('school')" style="border:1px solid rgba(0,229,160,0.4);border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;transition:all .2s;background:var(--green-dim)">
+          <div style="font-family:var(--display);font-size:13px;font-weight:700;margin-bottom:3px">School</div>
+          <div style="font-size:10px;color:var(--t3)">20 teachers</div>
+          <div style="font-family:var(--display);font-size:16px;font-weight:700;color:var(--green);margin-top:4px">$49<span style="font-size:10px;font-weight:400">/mo</span></div>
+        </div>
+        <div class="plan-opt" data-plan="institution" onclick="selectPlan('institution')" style="border:1px solid var(--border2);border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;transition:all .2s">
+          <div style="font-family:var(--display);font-size:13px;font-weight:700;margin-bottom:3px">Institution</div>
+          <div style="font-size:10px;color:var(--t3)">Unlimited</div>
+          <div style="font-family:var(--display);font-size:16px;font-weight:700;color:var(--green);margin-top:4px">$199<span style="font-size:10px;font-weight:400">/mo</span></div>
+        </div>
+      </div>
+      <input type="hidden" id="rg-plan" value="school"/>
       <div class="field-row">
         <div class="field"><label class="field-label">First Name</label><input class="field-input" id="rg-fn" placeholder="Jane"/></div>
         <div class="field"><label class="field-label">Last Name</label><input class="field-input" id="rg-ln" placeholder="Smith"/></div>
@@ -523,10 +542,18 @@ html,body{height:100%;background:var(--bg);color:var(--t1);font-family:var(--bod
     <div class="page" id="page-sessions">
       <div class="ph"><h1>Session History</h1><p>All recorded sessions</p></div>
       <div class="card">
-        <div class="ch"><div class="ct">Sessions</div><span style="font-size:12px;color:var(--t3)" id="sess-count">—</span></div>
+        <div class="ch"><div class="ct">Sessions</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;color:var(--t3)" id="sess-count">—</span>
+            <a id="export-all-btn" href="#" onclick="exportAll(event)" class="btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export All CSV
+            </a>
+          </div>
+        </div>
         <div id="sess-loading" class="empty"><div class="empty-icon" style="background:var(--blue-dim);color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="empty-title">Loading sessions…</div></div>
         <table class="tbl hidden" id="sess-table">
-          <thead><tr><th>ID</th><th>Class</th><th>Date</th><th>Duration</th><th>Avg Attention</th><th>Alerts</th><th>Status</th></tr></thead>
+          <thead><tr><th>ID</th><th>Class</th><th>Date</th><th>Duration</th><th>Avg Attention</th><th>Alerts</th><th>Status</th><th>Export</th></tr></thead>
           <tbody id="sess-body"></tbody>
         </table>
         <div class="pag" id="sess-pag"></div>
@@ -616,6 +643,19 @@ function toast(msg, icon = 'ℹ', dur = 2800) {
   setTimeout(() => { t.style.animation = 'none'; t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, dur);
 }
 
+// ══ PLAN SELECTOR ══
+function selectPlan(plan) {
+  document.querySelectorAll('.plan-opt').forEach(el => {
+    const active = el.dataset.plan === plan;
+    el.style.border      = active ? '1px solid rgba(0,229,160,0.4)' : '1px solid var(--border2)';
+    el.style.background  = active ? 'var(--green-dim)' : '';
+  });
+  const inp = e('rg-plan'); if (inp) inp.value = plan;
+  const roleMap = { starter:'teacher', school:'teacher', institution:'school_admin' };
+  const roleEl  = e('rg-role');
+  if (roleEl && roleMap[plan]) roleEl.value = roleMap[plan];
+}
+
 // ══ AUTH TABS ══
 function switchTab(tab) {
   e('form-login').style.display    = tab === 'login'    ? '' : 'none';
@@ -671,15 +711,16 @@ async function doRegister() {
   }
   btn.disabled = true; btn.textContent = 'Creating account…';
   try {
+    const plan = (e('rg-plan') && e('rg-plan').value) || 'starter';
     const res  = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fname + ' ' + lname, email, password: pass, role }),
+      body: JSON.stringify({ name: fname + ' ' + lname, email, password: pass, role, plan }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-    ok.textContent = 'Account created! You can now sign in.';
+    ok.textContent = data.message || 'Account created! You can now sign in.';
     ok.style.display = 'block';
     setTimeout(() => {
       switchTab('login');
@@ -732,9 +773,35 @@ function bootApp() {
   checkActiveSession();
 }
 
-// Auto-boot if stored token valid
+// Auto-boot if stored token valid, else go to landing
+const _params     = new URLSearchParams(window.location.search);
+const _wantsLogin    = _params.has('login');
+const _wantsRegister = _params.has('register');
+const _planParam     = _params.get('plan') || '';
+
 if (S.token && S.user) {
-  api('/api/auth/me').then(r => { if (r.ok) bootApp(); else { S.token = null; } }).catch(() => {});
+  api('/api/auth/me')
+    .then(r => { if (r.ok) bootApp(); else { S.token = null; window.location.href = '/landing'; } })
+    .catch(() => { window.location.href = '/landing'; });
+} else if (_wantsRegister) {
+  switchTab('register');
+  if (_planParam) {
+    const planMap = { starter: 'Free', school: 'School', institution: 'Institution' };
+    const planName = planMap[_planParam] || '';
+    if (planName) {
+      const badge = document.createElement('div');
+      badge.style.cssText = 'background:var(--green-dim);border:1px solid var(--green-glow);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--green);margin-bottom:14px;display:flex;align-items:center;gap:8px';
+      badge.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Selected plan: <strong>${planName}</strong>`;
+      const regForm = e('form-register');
+      if (regForm) regForm.insertBefore(badge, regForm.firstChild);
+    }
+    // selectPlan defined above — highlight correct plan card
+    selectPlan(_planParam);
+  }
+} else if (_wantsLogin) {
+  // Show login tab — already default
+} else {
+  window.location.href = '/landing';
 }
 
 // ══ SESSION CONTROL ══
@@ -800,7 +867,11 @@ function connectSocket() {
   _sock = io();
 
   _sock.on('attention_update', d => {
-    if (!S.sessionActive) return;
+    // Set session active from the live data itself — no timing dependency
+    if (!S.sessionActive) {
+      S.sessionActive = true;
+      setSessionUI(true);
+    }
     const pct = d.pct;
     const col  = pct > 75 ? 'var(--green)' : pct > 40 ? 'var(--amber)' : 'var(--red)';
     setVal('ov-pct', pct+'%', col);
@@ -936,7 +1007,7 @@ function mkEmpty(icon, title, sub) {
 
 // ══ SESSIONS ══
 async function loadSessions(pg=1) {
-  const ld=e('sess-loading'), tb=e('sess-table'), bd=e('sess-body'), ct=e('sess-count');
+  const ld=e('sess-loading'), tb=e('sess-table'), bd=e('sess-body');
   ld.classList.remove('hidden'); tb.classList.add('hidden');
   try {
     const res  = await api(`/api/sessions?page=${pg}&per_page=15`);
@@ -948,13 +1019,41 @@ async function loadSessions(pg=1) {
       const avg=s.avg_attention;
       const bc = s.is_active?'bdg-live':avg===null?'':avg>=75?'bdg-good':avg>=40?'bdg-fair':'bdg-low';
       const lb = s.is_active?'Active':avg===null?'—':avg>=75?'Good':avg>=40?'Fair':'Low';
-      return `<tr><td>#${s.id}</td><td>${s.class_name||'—'}</td><td>${new Date(s.started_at).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})}</td><td>${s.duration_seconds?fmtDur(s.duration_seconds):'—'}</td><td>${avg!==null?avg+'%':'—'}</td><td>${s.distraction_events??'—'}</td><td><span class="tbdg ${bc}">${lb}</span></td></tr>`;
+      const tok = encodeURIComponent(S.token||'');
+      const exportBtns = s.is_active
+        ? '<span style="color:var(--t3);font-size:11px">In progress</span>'
+        : `<div style="display:flex;gap:5px">
+            <a href="/api/sessions/${s.id}/export/pdf?token=${tok}" target="_blank" class="btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PDF
+            </a>
+            <a href="/api/sessions/${s.id}/export/csv?token=${tok}" class="btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV
+            </a>
+          </div>`;
+      return `<tr>
+        <td>#${s.id}</td>
+        <td>${s.class_name||'—'}</td>
+        <td>${new Date(s.started_at).toLocaleString([],{dateStyle:'medium',timeStyle:'short'})}</td>
+        <td>${s.duration_seconds?fmtDur(s.duration_seconds):'—'}</td>
+        <td>${avg!==null?avg+'%':'—'}</td>
+        <td>${s.distraction_events??'—'}</td>
+        <td><span class="tbdg ${bc}">${lb}</span></td>
+        <td>${exportBtns}</td>
+      </tr>`;
     }).join('');
     const pg2=e('sess-pag');
-    pg2.innerHTML = data.pages>1 ? `<button class="pgb" ${pg<=1?'disabled':''} onclick="loadSessions(${pg-1})">‹</button>${Array.from({length:data.pages},(_,i)=>`<button class="pgb ${i+1===pg?'active':''}" onclick="loadSessions(${i+1})">${i+1}</button>`).join('')}<button class="pgb" ${pg>=data.pages?'disabled':''} onclick="loadSessions(${pg+1})">›</button>` : '';
+    pg2.innerHTML = data.pages>1
+      ? `<button class="pgb" ${pg<=1?'disabled':''} onclick="loadSessions(${pg-1})">‹</button>
+         ${Array.from({length:data.pages},(_,i)=>`<button class="pgb ${i+1===pg?'active':''}" onclick="loadSessions(${i+1})">${i+1}</button>`).join('')}
+         <button class="pgb" ${pg>=data.pages?'disabled':''} onclick="loadSessions(${pg+1})">›</button>` : '';
   } catch(ex) { ld.innerHTML=mkEmpty('✗','Failed to load sessions','Check your connection'); }
 }
 function fmtDur(s) { const m=Math.floor(s/60),sec=s%60; return m>0?`${m}m ${sec}s`:`${sec}s`; }
+
+function exportAll(evt) {
+  evt.preventDefault();
+  window.location.href = `/api/sessions/export/csv?token=${encodeURIComponent(S.token||'')}`;
+}
 
 // ══ ANALYTICS ══
 async function loadAnalytics() {

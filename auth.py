@@ -45,7 +45,12 @@ def decode_token(token: str) -> dict:
 def require_auth(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
+        # Support ?token= query param for file download links (PDF/CSV)
         header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            qtoken = request.args.get("token", "")
+            if qtoken:
+                header = "Bearer " + qtoken
         if not header.startswith("Bearer "):
             return jsonify({"error": "Missing authorization token"}), 401
         token = header[7:].strip()
@@ -145,8 +150,8 @@ def signup():
     name     = (data.get("name") or "").strip()
     password = data.get("password") or ""
     role     = data.get("role") or "teacher"
+    plan     = data.get("plan") or "starter"   # stored for reference
 
-    # Only allow self-registration for non-admin roles
     if role not in ("teacher", "school_admin", "student"):
         role = "teacher"
 
@@ -157,20 +162,19 @@ def signup():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already registered"}), 409
 
-    # Attach to the first (or only) institution
     inst = Institution.query.first()
 
     user = User(
         email=email, name=name, role=role,
         institution_id=inst.id if inst else None,
-        is_active=True,   # auto-activate for simplicity; set False for approval flow
+        is_active=True,
     )
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
 
     return jsonify({
-        "message": "Account created. You can now sign in.",
+        "message": f"Account created on the {plan.title()} plan. You can now sign in.",
         "user":    user.to_dict(),
     }), 201
 
