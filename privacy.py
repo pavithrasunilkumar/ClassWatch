@@ -1,10 +1,9 @@
-# ============================================================
+
 # privacy.py — Privacy Layer
 # • MediaPipe face detection for accurate face region
 # • CUDA-accelerated Gaussian blur if opencv-contrib + CUDA
 # • Falls back to CPU GaussianBlur gracefully
 # • No face images stored
-# ============================================================
 
 import cv2
 import numpy as np
