@@ -6,10 +6,6 @@ An advanced computer vision-driven system for analyzing collective classroom att
 
 ## Pipeline Architecture
 
-<p align="center">
-  <img src="architecture.svg" alt="ClassWatch Pipeline Architecture" width="100%"/>
-</p>
-
 The pipeline runs in a continuous loop per frame:
 
 ```
