@@ -277,3 +277,6 @@ Ensure your CUDA drivers and CUDA-enabled PyTorch build are installed correctly.
 | [Flask + Flask-SocketIO](https://flask-socketio.readthedocs.io) | Web dashboard server |
 | [Chart.js](https://www.chartjs.org) | Browser-side charts |
 | [Matplotlib](https://matplotlib.org) | Post-session graph image |
+
+
+ACADEMIC PROJECT -MIT WPU
